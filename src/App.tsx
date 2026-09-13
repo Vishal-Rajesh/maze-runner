@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { GameStatus, LeaderboardEntry, Point } from './types';
+import { GameStatus, LeaderboardEntry, Point, RunnerLivePosition } from './types';
 import { getMazeForRoom } from './data/mazeData';
 import { MazeCanvas } from './components/MazeCanvas';
 import { LetterSmasherMinigame } from './components/LetterSmasherMinigame';
@@ -18,6 +18,7 @@ import {
   DoorOpen,
   Compass,
   Users,
+  Share2,
 } from 'lucide-react';
 
 export default function App() {
@@ -34,7 +35,7 @@ export default function App() {
     }
   });
 
-  // Room Code (defaults from URL parameter ?room=XYZ or stored in session)
+  // Room Code (defaults from URL parameter ?room=XYZ or stored in session, NO default room)
   const [roomCode, setRoomCode] = useState<string>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -45,11 +46,11 @@ export default function App() {
     } catch {
       // ignore
     }
-    return 'LAB-101';
+    return '';
   });
 
   // Dynamic Maze generated uniquely & deterministically for this room
-  const currentMaze = useMemo(() => getMazeForRoom(roomCode), [roomCode]);
+  const currentMaze = useMemo(() => getMazeForRoom(roomCode || 'ROOM-1'), [roomCode]);
 
   // --- Game State ---
   const [gameStatus, setGameStatus] = useState<GameStatus>('NAME_ENTRY');
@@ -60,7 +61,7 @@ export default function App() {
       return '';
     }
   });
-  const [playerPos, setPlayerPos] = useState<Point>(() => getMazeForRoom(roomCode).startPos);
+  const [playerPos, setPlayerPos] = useState<Point>(() => getMazeForRoom(roomCode || 'ROOM-1').startPos);
   const [lives, setLives] = useState<number>(5);
   const [completedCheckpoints, setCompletedCheckpoints] = useState<boolean[]>([
     false,
@@ -73,6 +74,11 @@ export default function App() {
 
   // Invulnerability window after taking damage (ms)
   const [invulnerableUntil, setInvulnerableUntil] = useState<number>(0);
+
+  // Live positions of other multiplayer runners in this room
+  const [otherRunners, setOtherRunners] = useState<RunnerLivePosition[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const lastSentPosRef = useRef<{ c: number; r: number }>({ c: -1, r: -1 });
 
   // Timer
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -192,6 +198,9 @@ export default function App() {
             if (Array.isArray(data)) {
               setLeaderboard(data);
             }
+          } else if (type === 'positions_update' && Array.isArray(data)) {
+            // Live position updates for other runners in this room
+            setOtherRunners(data.filter((p: RunnerLivePosition) => p.id !== runnerId));
           } else if (type === 'checkpoint_cleared') {
             const isMe = data.playerId === runnerId;
             addLiveEvent(
@@ -229,6 +238,67 @@ export default function App() {
       if (es) es.close();
     };
   }, [addLiveEvent, roomCode, runnerId, showToast]);
+
+  // 2.5 High-Throughput Real-Time WebSocket Connection for 30-100 Players
+  useEffect(() => {
+    if (!roomCode || !playerName || gameStatus === 'NAME_ENTRY') return;
+
+    let ws: WebSocket | null = null;
+    let isMounted = true;
+    let retryTimeout: number | null = null;
+
+    const connectWs = () => {
+      try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        const wsUrl = `${protocol}//${host}/ws?roomCode=${encodeURIComponent(
+          roomCode
+        )}&id=${encodeURIComponent(runnerId)}&name=${encodeURIComponent(playerName)}`;
+
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'positions_update' && Array.isArray(msg.data)) {
+              setOtherRunners(msg.data.filter((p: RunnerLivePosition) => p.id !== runnerId));
+            } else if (
+              (msg.type === 'initial_state' || msg.type === 'leaderboard_update') &&
+              Array.isArray(msg.data)
+            ) {
+              setLeaderboard(msg.data);
+            }
+          } catch {
+            // ignore
+          }
+        };
+
+        ws.onclose = () => {
+          wsRef.current = null;
+          if (isMounted) {
+            retryTimeout = window.setTimeout(connectWs, 2000);
+          }
+        };
+
+        ws.onerror = () => {
+          // allow onclose to retry
+        };
+      } catch {
+        // ignore
+      }
+    };
+
+    connectWs();
+
+    return () => {
+      isMounted = false;
+      if (retryTimeout) clearTimeout(retryTimeout);
+      if (ws) ws.close();
+      wsRef.current = null;
+    };
+  }, [roomCode, runnerId, playerName, gameStatus]);
 
   // 3. Heartbeat to keep room presence
   useEffect(() => {
@@ -299,6 +369,7 @@ export default function App() {
 
     const targetMaze = getMazeForRoom(cleanRoom);
     setPlayerPos(targetMaze.startPos);
+    lastSentPosRef.current = { c: -1, r: -1 };
     setLives(5);
     setCompletedCheckpoints([false, false, false, false, false]);
     setActiveCheckpointId(null);
@@ -324,6 +395,7 @@ export default function App() {
   // Restart run with existing name & room
   const handleRestart = async () => {
     setPlayerPos(currentMaze.startPos);
+    lastSentPosRef.current = { c: -1, r: -1 };
     setLives(5);
     setCompletedCheckpoints([false, false, false, false, false]);
     setActiveCheckpointId(null);
@@ -350,6 +422,48 @@ export default function App() {
   const handleSwitchRoom = () => {
     setGameStatus('NAME_ENTRY');
   };
+
+  // Broadcast player movement in real-time across 30-100 players
+  const handleMovePlayer = useCallback(
+    (newPos: Point) => {
+      setPlayerPos(newPos);
+
+      // Only send if cell coordinate actually changed to avoid network congestion
+      if (lastSentPosRef.current.c === newPos.c && lastSentPosRef.current.r === newPos.r) {
+        return;
+      }
+      lastSentPosRef.current = { c: newPos.c, r: newPos.r };
+
+      if (!roomCode || !playerName) return;
+
+      // 1. High-speed WebSocket dispatch
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'move',
+            id: runnerId,
+            name: playerName,
+            c: newPos.c,
+            r: newPos.r,
+          })
+        );
+      } else {
+        // 2. HTTP Fallback
+        fetch('/api/player/move', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: runnerId,
+            name: playerName,
+            roomCode,
+            c: newPos.c,
+            r: newPos.r,
+          }),
+        }).catch(() => {});
+      }
+    },
+    [roomCode, playerName, runnerId]
+  );
 
   // Checkpoint triggered in maze
   const handleTriggerCheckpoint = (cpId: number) => {
@@ -524,8 +638,23 @@ export default function App() {
                 MAZE RUNNER <span className="text-xs text-cyan-400 font-mono font-normal">SIGNAL BREACH</span>
               </h1>
               <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2">
-                <span className="flex items-center gap-1 text-cyan-300 font-bold">
-                  <Users className="w-3 h-3" /> ROOM: {roomCode}
+                <span className="flex items-center gap-1.5 text-cyan-300 font-bold">
+                  <Users className="w-3.5 h-3.5" /> ROOM: {roomCode || 'NONE'}
+                  {roomCode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+                        navigator.clipboard.writeText(shareUrl);
+                        showToast(`📋 Room invite link [${roomCode}] copied to clipboard!`);
+                      }}
+                      className="ml-1 px-1.5 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 text-[10px] font-mono border border-cyan-500/40 flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Copy shareable link for your team"
+                    >
+                      <Share2 className="w-2.5 h-2.5" />
+                      <span>Share</span>
+                    </button>
+                  )}
                 </span>
                 <span>•</span>
                 <span>{playerName ? `RUNNER: ${playerName}` : 'CALLSIGN PENDING'}</span>
@@ -628,13 +757,14 @@ export default function App() {
             <MazeCanvas
               maze={currentMaze}
               playerPos={playerPos}
-              onMovePlayer={setPlayerPos}
+              onMovePlayer={handleMovePlayer}
               completedCheckpoints={completedCheckpoints}
               onTriggerCheckpoint={handleTriggerCheckpoint}
               onHitHazard={handleHitHazard}
               onReachExit={handleReachExit}
               onShowWarning={showToast}
               invulnerableUntil={invulnerableUntil}
+              otherRunners={otherRunners}
             />
 
             {/* Checkpoint Letter Smasher Overlay */}

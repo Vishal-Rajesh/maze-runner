@@ -85,6 +85,14 @@ export interface Point {
   r: number;
 }
 
+export interface RunnerLivePosition {
+  id: string;
+  name: string;
+  c: number;
+  r: number;
+  updatedAt?: number;
+}
+
 export interface MazeData {
   cols: number;
   rows: number;

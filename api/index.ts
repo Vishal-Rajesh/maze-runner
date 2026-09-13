@@ -1,6 +1,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import type { WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 
 interface PlayerSession {
   id: string;
@@ -13,6 +15,14 @@ interface PlayerSession {
   livesRemaining: number;
   lastActive: number; // timestamp
   finishedAt?: number;
+}
+
+export interface RunnerPosition {
+  id: string;
+  name: string;
+  c: number;
+  r: number;
+  updatedAt: number;
 }
 
 interface RoomData {
@@ -45,14 +55,72 @@ const rooms: Map<string, RoomData> = new Map();
 // Map of roomCode -> Set of express Response streams (for SSE)
 const roomSseClients: Map<string, Set<express.Response>> = new Map();
 
+// Map of roomCode -> Set of WebSocket clients
+export const roomWsClients: Map<string, Set<WebSocket>> = new Map();
+
+// Map of roomCode -> Map of playerId -> RunnerPosition
+export const roomPositions: Map<string, Map<string, RunnerPosition>> = new Map();
+
 export function sanitizeRoomCode(code: string): string {
   return (
     String(code || '')
       .trim()
       .toUpperCase()
       .replace(/[^A-Z0-9_-]/g, '')
-      .slice(0, 12) || 'DEFAULT'
+      .slice(0, 14) || 'ROOM-1'
   );
+}
+
+// Prefix list for generating cool team room codes
+const TEAM_PREFIXES = [
+  'ALPHA', 'BETA', 'CYBER', 'DELTA', 'ECHO', 'FROST', 'GHOST', 'HYPER',
+  'ION', 'JADE', 'KRYPTON', 'LASER', 'MATRIX', 'NEXUS', 'OMEGA', 'PULSE',
+  'QUANTUM', 'RADAR', 'STORM', 'TITAN', 'ULTRA', 'VIPER', 'WARP', 'XENON', 'ZERO'
+];
+
+export function generateRandomRoomCode(): string {
+  const prefix = TEAM_PREFIXES[Math.floor(Math.random() * TEAM_PREFIXES.length)];
+  const num = Math.floor(10 + Math.random() * 90);
+  return `${prefix}-${num}`;
+}
+
+export function updateRunnerPosition(
+  roomCode: string,
+  id: string,
+  name: string,
+  c: number,
+  r: number
+) {
+  const code = sanitizeRoomCode(roomCode);
+  let pMap = roomPositions.get(code);
+  if (!pMap) {
+    pMap = new Map();
+    roomPositions.set(code, pMap);
+  }
+  pMap.set(id, {
+    id,
+    name: (name || 'Runner').slice(0, 14),
+    c: Number(c),
+    r: Number(r),
+    updatedAt: Date.now(),
+  });
+}
+
+export function getActiveRoomPositions(roomCode: string) {
+  const code = sanitizeRoomCode(roomCode);
+  const pMap = roomPositions.get(code);
+  if (!pMap) return [];
+  const now = Date.now();
+  const list: { id: string; name: string; c: number; r: number }[] = [];
+  for (const [id, pos] of pMap.entries()) {
+    // Prune runners inactive for > 15s
+    if (now - pos.updatedAt > 15000) {
+      pMap.delete(id);
+    } else {
+      list.push({ id: pos.id, name: pos.name, c: pos.c, r: pos.r });
+    }
+  }
+  return list;
 }
 
 // Load persisted room data if available
@@ -140,18 +208,110 @@ export function getSortedRoomLeaderboard(roomCode: string) {
 
 export function broadcastToRoom(roomCode: string, type: string, data: unknown) {
   const code = sanitizeRoomCode(roomCode);
-  const clients = roomSseClients.get(code);
-  if (!clients || clients.size === 0) return;
 
-  const payload = `data: ${JSON.stringify({ type, roomCode: code, data, timestamp: Date.now() })}\n\n`;
-  for (const client of clients) {
-    try {
-      client.write(payload);
-    } catch {
-      clients.delete(client);
+  // 1. SSE Broadcast
+  const sseClients = roomSseClients.get(code);
+  if (sseClients && sseClients.size > 0) {
+    const payload = `data: ${JSON.stringify({ type, roomCode: code, data, timestamp: Date.now() })}\n\n`;
+    for (const client of sseClients) {
+      try {
+        client.write(payload);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  // 2. WebSocket Broadcast
+  const wsClients = roomWsClients.get(code);
+  if (wsClients && wsClients.size > 0) {
+    const wsPayload = JSON.stringify({ type, roomCode: code, data, timestamp: Date.now() });
+    for (const ws of wsClients) {
+      try {
+        if (ws.readyState === 1 /* OPEN */) {
+          ws.send(wsPayload);
+        }
+      } catch {
+        wsClients.delete(ws);
+      }
     }
   }
 }
+
+// WebSocket Setup for low-latency zero-lag movement sync
+export function setupWebSocket(httpServer: any) {
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+
+  wss.on('connection', (ws: WebSocket, req: any) => {
+    try {
+      const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      const rawCode = url.searchParams.get('roomCode') || '';
+      const roomCode = sanitizeRoomCode(rawCode);
+      const runnerId = url.searchParams.get('id') || '';
+      const runnerName = url.searchParams.get('name') || 'Runner';
+
+      if (!roomWsClients.has(roomCode)) {
+        roomWsClients.set(roomCode, new Set());
+      }
+      roomWsClients.get(roomCode)!.add(ws);
+
+      // Send initial positions immediately
+      const initialPositions = getActiveRoomPositions(roomCode);
+      ws.send(JSON.stringify({ type: 'positions_update', roomCode, data: initialPositions }));
+
+      ws.on('message', (rawMsg: any) => {
+        try {
+          const parsed = JSON.parse(rawMsg.toString());
+          if (parsed.type === 'move' && typeof parsed.c === 'number' && typeof parsed.r === 'number') {
+            updateRunnerPosition(
+              roomCode,
+              parsed.id || runnerId,
+              parsed.name || runnerName,
+              parsed.c,
+              parsed.r
+            );
+          }
+        } catch {
+          // ignore malformed msg
+        }
+      });
+
+      ws.on('close', () => {
+        const clientSet = roomWsClients.get(roomCode);
+        if (clientSet) {
+          clientSet.delete(ws);
+          if (clientSet.size === 0) {
+            roomWsClients.delete(roomCode);
+          }
+        }
+      });
+
+      ws.on('error', () => {
+        // safe error catch
+      });
+    } catch {
+      // safe fallback
+    }
+  });
+
+  return wss;
+}
+
+// Zero-Lag 20Hz Batching Tick (50ms interval):
+// Batches 30-100 player positions into compact updates per room
+setInterval(() => {
+  if (roomPositions.size === 0) return;
+  for (const [code, pMap] of roomPositions.entries()) {
+    const hasSse = roomSseClients.has(code) && roomSseClients.get(code)!.size > 0;
+    const hasWs = roomWsClients.has(code) && roomWsClients.get(code)!.size > 0;
+    if (!hasSse && !hasWs) continue;
+
+    const positions = getActiveRoomPositions(code);
+    if (positions.length > 0) {
+      broadcastToRoom(code, 'positions_update', positions);
+    }
+  }
+}, 50);
 
 // Helper router to handle routes with or without "/api" prefix
 const apiRouter = express.Router();
@@ -171,12 +331,22 @@ apiRouter.post('/room/create', (req, res) => {
   let code = customCode ? sanitizeRoomCode(customCode) : '';
 
   if (!code) {
-    const num = Math.floor(100 + Math.random() * 900);
-    code = `LAB-${num}`;
+    code = generateRandomRoomCode();
   }
 
   const room = getOrCreateRoom(code);
   res.json({ success: true, roomCode: room.code });
+});
+
+// Real-time player movement endpoint (fallback for environments where WS is blocked)
+apiRouter.post('/player/move', (req, res) => {
+  const { id, name, roomCode, c, r } = req.body;
+  if (!id || roomCode === undefined || c === undefined || r === undefined) {
+    res.status(400).json({ error: 'Missing movement parameters' });
+    return;
+  }
+  updateRunnerPosition(roomCode, id, name, c, r);
+  res.json({ success: true });
 });
 
 // Join Room / Register Player

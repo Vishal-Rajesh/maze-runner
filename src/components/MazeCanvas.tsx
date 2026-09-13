@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback } from 'react';
-import { Point, CheckpointConfig, HazardConfig, MazeData } from '../types';
+import { Point, CheckpointConfig, HazardConfig, MazeData, RunnerLivePosition } from '../types';
 import {
   DEFAULT_MAZE,
 } from '../data/mazeData';
@@ -15,6 +15,7 @@ interface MazeCanvasProps {
   onShowWarning: (msg: string) => void;
   invulnerableUntil: number;
   maze?: MazeData;
+  otherRunners?: RunnerLivePosition[];
 }
 
 const CELL_SIZE = 26; // 43 cols * 26 = 1118px, 25 rows * 26 = 650px
@@ -29,6 +30,7 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
   onShowWarning,
   invulnerableUntil,
   maze,
+  otherRunners = [],
 }) => {
   const currentMaze = maze || DEFAULT_MAZE;
   const {
@@ -47,6 +49,13 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
     x: playerPos.c * CELL_SIZE + CELL_SIZE / 2,
     y: playerPos.r * CELL_SIZE + CELL_SIZE / 2,
   });
+  const otherRunnersRef = useRef<RunnerLivePosition[]>(otherRunners);
+  const otherRunnersRenderPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // Update otherRunners ref immediately on prop change
+  useEffect(() => {
+    otherRunnersRef.current = otherRunners;
+  }, [otherRunners]);
   const trailParticlesRef = useRef<{ x: number; y: number; alpha: number }[]>([]);
   const lastMoveTimeRef = useRef(0);
   const activeKeysRef = useRef<{ [key: string]: boolean }>({});
@@ -486,6 +495,78 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
         }
       });
       trailParticlesRef.current = trailParticlesRef.current.filter((tp) => tp.alpha > 0);
+
+      // --- 8.5 RENDER OTHER PLAYERS MOVING IN THE SAME ROOM (30-100 PLAYERS) ---
+      // Reduced opacity cursor with small semi-transparent name tag on top
+      if (otherRunnersRef.current && otherRunnersRef.current.length > 0) {
+        const RUNNER_PALETTE = [
+          '#a855f7', '#ec4899', '#f97316', '#10b981', '#06b6d4',
+          '#eab308', '#8b5cf6', '#14b8a6', '#f43f5e', '#6366f1'
+        ];
+
+        // Prune stale runner entries
+        const activeIds = new Set(otherRunnersRef.current.map((r) => r.id));
+        for (const id of otherRunnersRenderPosRef.current.keys()) {
+          if (!activeIds.has(id)) {
+            otherRunnersRenderPosRef.current.delete(id);
+          }
+        }
+
+        otherRunnersRef.current.forEach((runner) => {
+          const targetX = runner.c * CELL_SIZE + CELL_SIZE / 2;
+          const targetY = runner.r * CELL_SIZE + CELL_SIZE / 2;
+
+          let pos = otherRunnersRenderPosRef.current.get(runner.id);
+          if (!pos) {
+            pos = { x: targetX, y: targetY };
+            otherRunnersRenderPosRef.current.set(runner.id, pos);
+          } else {
+            // Smooth lerp interpolation for zero-lag silky rendering
+            pos.x += (targetX - pos.x) * 0.35;
+            pos.y += (targetY - pos.y) * 0.35;
+          }
+
+          let hash = 0;
+          for (let i = 0; i < runner.id.length; i++) {
+            hash = (hash * 31 + runner.id.charCodeAt(i)) | 0;
+          }
+          const runnerColor = RUNNER_PALETTE[Math.abs(hash) % RUNNER_PALETTE.length];
+
+          ctx.save();
+
+          // 1. Reduced Opacity Cursor
+          ctx.globalAlpha = 0.42;
+          ctx.fillStyle = runnerColor;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, 7.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Small inner core
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 2. Small Name Tag on Top with Reduced Opacity
+          ctx.globalAlpha = 0.55;
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+
+          const textWidth = ctx.measureText(runner.name).width;
+          ctx.fillStyle = 'rgba(2, 6, 23, 0.7)';
+          ctx.fillRect(pos.x - textWidth / 2 - 2, pos.y - 19, textWidth + 4, 10);
+
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillText(runner.name, pos.x, pos.y - 10);
+
+          ctx.restore();
+        });
+      }
 
       // --- 9. RENDER PLAYER (THE BLUE DRONE) ---
       const px = playerRenderPosRef.current.x;

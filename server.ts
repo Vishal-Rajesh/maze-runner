@@ -1,4 +1,4 @@
-import { app } from './api/index.js';
+import { app, setupWebSocket } from './api/index.js';
 import http from 'http';
 import path from 'path';
 import express from 'express';
@@ -6,6 +6,9 @@ import { createServer as createViteServer } from 'vite';
 
 const server = http.createServer(app);
 const PORT = 3000;
+
+// Attach real-time WebSocket server
+setupWebSocket(server);
 
 // ==================== VITE & STATIC SERVING ====================
 async function startServer() {

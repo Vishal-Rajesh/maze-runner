@@ -1,0 +1,6 @@
+{
+  "name": "Maze Runner: Signal Breach",
+  "description": "A sci-fi cyber maze navigation game with disappearing hazards, five letter-smash mini-game checkpoints, bomb letters, and a live leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

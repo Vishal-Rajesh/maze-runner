@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { FlyingLetter, Sparkle } from '../types';
+import { FlyingLetter, Sparkle, CheckpointConfig } from '../types';
 import { CHECKPOINTS } from '../data/mazeData';
 import { sound } from '../utils/sound';
 import { Heart, Bomb, ShieldAlert, Sparkles, Zap, Timer } from 'lucide-react';
 
 interface LetterSmasherMinigameProps {
   checkpointId: number; // 1 to 5
+  checkpointConfig?: CheckpointConfig;
   lives: number;
   onSuccess: () => void;
   onLoseLife: (reason: string) => void;
@@ -18,12 +19,13 @@ const BOMB_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
 export const LetterSmasherMinigame: React.FC<LetterSmasherMinigameProps> = ({
   checkpointId,
+  checkpointConfig,
   lives,
   onSuccess,
   onLoseLife,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const cpConfig = CHECKPOINTS.find((c) => c.id === checkpointId) || CHECKPOINTS[0];
+  const cpConfig = checkpointConfig || CHECKPOINTS.find((c) => c.id === checkpointId) || CHECKPOINTS[0];
   const targetCount = cpConfig.targetCount;
 
   const [smashedCount, setSmashedCount] = useState(0);
@@ -548,41 +550,31 @@ export const LetterSmasherMinigame: React.FC<LetterSmasherMinigameProps> = ({
   return (
     <div className="absolute inset-0 z-50 flex flex-col items-center justify-between bg-slate-950/92 backdrop-blur-md p-4 select-none">
       {/* Top Banner HUD */}
-      <div className="w-full max-w-4xl flex items-center justify-between border-b border-cyan-500/30 pb-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 text-xs font-bold font-mono">
-              CP{checkpointId}
-            </span>
-            <h2 className="text-xl font-black text-cyan-300 tracking-wider font-['Orbitron']">
-              CHECKPOINT {checkpointId}/5 — {cpConfig.name.toUpperCase()}
-            </h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400 inline" />
-            Type or slice the <span className="text-cyan-300 font-semibold">CYAN letters</span> (visible for 4+ seconds).
-            <span className="text-red-400 font-bold ml-1 inline-flex items-center gap-1">
-              <Bomb className="w-3.5 h-3.5 text-red-400" /> AVOID RED BOMB LETTERS!
-            </span>
-          </p>
+      <div className="w-full max-w-4xl flex items-center justify-between border-b border-cyan-500/30 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 text-xs font-bold font-mono">
+            CP{checkpointId}
+          </span>
+          <h2 className="text-lg font-black text-cyan-300 font-mono tracking-wider">
+            CHECKPOINT {checkpointId}/5
+          </h2>
         </div>
 
         {/* Lives counter */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {combo > 1 && (
-            <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-mono font-bold animate-pulse">
-              <Zap className="w-3.5 h-3.5" />
-              COMBO x{combo}
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-mono font-bold">
+              <Zap className="w-3 h-3" />
+              x{combo}
             </div>
           )}
-          <div className="flex items-center gap-1.5 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-700">
-            <span className="text-xs text-slate-400 mr-1 font-mono uppercase">Lives:</span>
+          <div className="flex items-center gap-1 bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700">
             {Array.from({ length: 5 }).map((_, i) => (
               <Heart
                 key={i}
-                className={`w-5 h-5 transition-transform ${
+                className={`w-4 h-4 ${
                   i < lives
-                    ? 'text-red-500 fill-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]'
+                    ? 'text-red-500 fill-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,0.8)]'
                     : 'text-slate-700'
                 }`}
               />
@@ -609,22 +601,10 @@ export const LetterSmasherMinigame: React.FC<LetterSmasherMinigameProps> = ({
           </div>
         )}
 
-        {/* Controls Legend / Reminder */}
-        <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between text-xs text-slate-400 pointer-events-none bg-slate-900/75 backdrop-blur-sm px-3 py-1.5 rounded border border-slate-800">
-          <span className="flex items-center gap-1.5">
-            <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[11px]">
-              [KEYBOARD A-Z]
-            </span>
-            Type letter or Drag mouse to slice
-          </span>
-          <span className="text-slate-400 flex items-center gap-1 font-medium">
-            <Timer className="w-3.5 h-3.5 text-cyan-400" />
-            Letters float for 4 seconds — take your time!
-          </span>
-          <span className="text-red-400 flex items-center gap-1 font-semibold">
-            <ShieldAlert className="w-3.5 h-3.5" />
-            Missing letters or typing bombs costs 1 life
-          </span>
+        {/* Controls Hint */}
+        <div className="absolute bottom-2.5 left-4 right-4 flex items-center justify-between text-[11px] text-slate-400 pointer-events-none bg-slate-900/80 backdrop-blur-sm px-3 py-1 rounded border border-slate-800 font-mono">
+          <span>Type letter or drag mouse to smash</span>
+          <span className="text-red-400 font-bold">Avoid Red Bombs (-1 Life)</span>
         </div>
       </div>
 

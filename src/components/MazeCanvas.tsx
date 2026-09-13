@@ -1,13 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
-import { Point, CheckpointConfig } from '../types';
+import { Point, CheckpointConfig, HazardConfig, MazeData } from '../types';
 import {
-  MAZE_GRID,
-  MAZE_COLS,
-  MAZE_ROWS,
-  START_POS,
-  EXIT_POS,
-  CHECKPOINTS,
-  HAZARDS,
+  DEFAULT_MAZE,
 } from '../data/mazeData';
 import { sound } from '../utils/sound';
 
@@ -20,9 +14,10 @@ interface MazeCanvasProps {
   onReachExit: () => void;
   onShowWarning: (msg: string) => void;
   invulnerableUntil: number;
+  maze?: MazeData;
 }
 
-const CELL_SIZE = 30; // 35 cols * 30 = 1050px, 21 rows * 30 = 630px
+const CELL_SIZE = 26; // 43 cols * 26 = 1118px, 25 rows * 26 = 650px
 
 export const MazeCanvas: React.FC<MazeCanvasProps> = ({
   playerPos,
@@ -33,8 +28,21 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
   onReachExit,
   onShowWarning,
   invulnerableUntil,
+  maze,
 }) => {
+  const currentMaze = maze || DEFAULT_MAZE;
+  const {
+    cols: MAZE_COLS,
+    rows: MAZE_ROWS,
+    grid: MAZE_GRID,
+    startPos: START_POS,
+    exitPos: EXIT_POS,
+    checkpoints: CHECKPOINTS,
+    hazards: HAZARDS,
+  } = currentMaze;
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastHazardHitRef = useRef<number>(0);
   const playerRenderPosRef = useRef<{ x: number; y: number }>({
     x: playerPos.c * CELL_SIZE + CELL_SIZE / 2,
     y: playerPos.r * CELL_SIZE + CELL_SIZE / 2,
@@ -45,8 +53,17 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
 
   const allCleared = completedCheckpoints.every(Boolean);
 
+  // Sync render position when player teleports or maze changes
+  useEffect(() => {
+    playerRenderPosRef.current = {
+      x: playerPos.c * CELL_SIZE + CELL_SIZE / 2,
+      y: playerPos.r * CELL_SIZE + CELL_SIZE / 2,
+    };
+    trailParticlesRef.current = [];
+  }, [playerPos.c, playerPos.r, currentMaze]);
+
   // Helper to check if a hazard is currently active
-  const isHazardDangerous = useCallback((hz: (typeof HAZARDS)[0], now: number) => {
+  const isHazardDangerous = useCallback((hz: HazardConfig, now: number) => {
     const cycleTime = (now + hz.offsetMs) % hz.periodMs;
     return cycleTime < hz.activeDurationMs;
   }, []);
@@ -100,7 +117,22 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
         }
       }
     },
-    [allCleared, completedCheckpoints, onMovePlayer, onReachExit, onShowWarning, onTriggerCheckpoint, playerPos]
+    [
+      allCleared,
+      completedCheckpoints,
+      onMovePlayer,
+      onReachExit,
+      onShowWarning,
+      onTriggerCheckpoint,
+      playerPos.c,
+      playerPos.r,
+      MAZE_COLS,
+      MAZE_ROWS,
+      MAZE_GRID,
+      CHECKPOINTS,
+      EXIT_POS.c,
+      EXIT_POS.r,
+    ]
   );
 
   // Keyboard Event Listeners for Arrow keys & WASD
@@ -159,11 +191,12 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
       playerRenderPosRef.current.x += (targetX - playerRenderPosRef.current.x) * 0.4;
       playerRenderPosRef.current.y += (targetY - playerRenderPosRef.current.y) * 0.4;
 
-      // Hazard Collision Check
-      if (!isInvulnerable) {
+      // Hazard Collision Check (immediate local debounce so 1 hit takes exactly 1 life)
+      if (!isInvulnerable && now - lastHazardHitRef.current > 1800) {
         for (const hz of HAZARDS) {
           if (hz.c === playerPos.c && hz.r === playerPos.r) {
             if (isHazardDangerous(hz, now)) {
+              lastHazardHitRef.current = now;
               onHitHazard();
               break;
             }
@@ -511,32 +544,27 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
     onHitHazard,
     playerPos.c,
     playerPos.r,
+    currentMaze,
   ]);
 
   return (
     <div className="relative w-full flex flex-col items-center select-none">
-      {/* Dynamic Mission Banner for Exit Portal Status */}
-      <div className="w-full max-w-[1050px] mb-2 flex items-center justify-between text-xs px-3 py-1.5 rounded-lg border bg-slate-900/80 backdrop-blur">
+      {/* Minimal Status Bar */}
+      <div className="w-full max-w-[1120px] mb-2 flex items-center justify-between text-xs px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900/80 font-mono">
         <div className="flex items-center gap-2">
-          <span className={`w-2.5 h-2.5 rounded-full ${allCleared ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400 animate-pulse'}`} />
-          <span className="font-mono text-[11px] text-slate-300">
+          <span className={`w-2 h-2 rounded-full ${allCleared ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400'}`} />
+          <span className="text-[11px] text-slate-300">
             {allCleared ? (
-              <strong className="text-emerald-300 font-bold tracking-wide">
-                ⚡ EXTRACTION PORTAL REVEALED IN SECTOR OMEGA (BOTTOM-RIGHT) — ESCAPE NOW!
+              <strong className="text-emerald-300 font-bold">
+                ⚡ EXIT PORTAL UNLOCKED (BOTTOM-RIGHT) — ESCAPE NOW!
               </strong>
             ) : (
               <span>
-                <strong className="text-cyan-300">Mission:</strong> Navigate the expanded grid & secure all 5 Checkpoints to reveal the Exit Portal ({completedCheckpoints.filter(Boolean).length}/5)
+                Exit: Secured {completedCheckpoints.filter(Boolean).length}/5 Checkpoints
               </span>
             )}
           </span>
         </div>
-
-        {allCleared && (
-          <div className="hidden sm:flex items-center gap-1.5 font-mono text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/50 px-2 py-0.5 rounded animate-pulse">
-            <span>PORTAL ONLINE ➔</span>
-          </div>
-        )}
       </div>
 
       <div className="relative border-2 border-slate-700/80 rounded-xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] bg-slate-950 max-w-full">
@@ -544,7 +572,7 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
           ref={canvasRef}
           width={MAZE_COLS * CELL_SIZE}
           height={MAZE_ROWS * CELL_SIZE}
-          className="block max-w-full h-auto aspect-[35/21]"
+          className="block max-w-full h-auto aspect-[43/25]"
         />
       </div>
 

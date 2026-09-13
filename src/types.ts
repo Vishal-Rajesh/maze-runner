@@ -84,3 +84,13 @@ export interface Point {
   c: number;
   r: number;
 }
+
+export interface MazeData {
+  cols: number;
+  rows: number;
+  grid: number[][]; // 0 = pathway, 1 = solid wall
+  startPos: Point;
+  exitPos: Point;
+  checkpoints: CheckpointConfig[];
+  hazards: HazardConfig[];
+}

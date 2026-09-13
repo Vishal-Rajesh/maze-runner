@@ -1,23 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GameStatus, LeaderboardEntry, Point } from './types';
-import { START_POS, CHECKPOINTS } from './data/mazeData';
+import { getMazeForRoom } from './data/mazeData';
 import { MazeCanvas } from './components/MazeCanvas';
 import { LetterSmasherMinigame } from './components/LetterSmasherMinigame';
 import { Leaderboard } from './components/Leaderboard';
 import { NameModal } from './components/NameModal';
 import { EndGameModal } from './components/EndGameModal';
+import { AdminPanel } from './components/AdminPanel';
 import { sound } from './utils/sound';
 import {
   Heart,
   Clock,
   Volume2,
   VolumeX,
-  Compass,
   RotateCcw,
-  AlertTriangle,
   Info,
-  Users,
   DoorOpen,
+  Compass,
+  Users,
 } from 'lucide-react';
 
 export default function App() {
@@ -48,6 +48,9 @@ export default function App() {
     return 'LAB-101';
   });
 
+  // Dynamic Maze generated uniquely & deterministically for this room
+  const currentMaze = useMemo(() => getMazeForRoom(roomCode), [roomCode]);
+
   // --- Game State ---
   const [gameStatus, setGameStatus] = useState<GameStatus>('NAME_ENTRY');
   const [playerName, setPlayerName] = useState<string>(() => {
@@ -57,7 +60,7 @@ export default function App() {
       return '';
     }
   });
-  const [playerPos, setPlayerPos] = useState<Point>(START_POS);
+  const [playerPos, setPlayerPos] = useState<Point>(() => getMazeForRoom(roomCode).startPos);
   const [lives, setLives] = useState<number>(5);
   const [completedCheckpoints, setCompletedCheckpoints] = useState<boolean[]>([
     false,
@@ -77,6 +80,42 @@ export default function App() {
 
   // Audio mute state
   const [soundMuted, setSoundMuted] = useState<boolean>(false);
+
+  // Admin View State (/admin route)
+  const [isAdminView, setIsAdminView] = useState<boolean>(() => {
+    try {
+      return (
+        window.location.pathname.startsWith('/admin') ||
+        window.location.hash === '#admin' ||
+        window.location.search.includes('admin=true')
+      );
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      setIsAdminView(
+        window.location.pathname.startsWith('/admin') ||
+        window.location.hash === '#admin' ||
+        window.location.search.includes('admin=true')
+      );
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
+
+  const closeAdmin = () => {
+    setIsAdminView(false);
+    try {
+      window.history.pushState({}, '', '/');
+    } catch {}
+  };
 
   // Warnings / Toasts
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -258,7 +297,8 @@ export default function App() {
       // ignore
     }
 
-    setPlayerPos(START_POS);
+    const targetMaze = getMazeForRoom(cleanRoom);
+    setPlayerPos(targetMaze.startPos);
     setLives(5);
     setCompletedCheckpoints([false, false, false, false, false]);
     setActiveCheckpointId(null);
@@ -283,7 +323,7 @@ export default function App() {
 
   // Restart run with existing name & room
   const handleRestart = async () => {
-    setPlayerPos(START_POS);
+    setPlayerPos(currentMaze.startPos);
     setLives(5);
     setCompletedCheckpoints([false, false, false, false, false]);
     setActiveCheckpointId(null);
@@ -325,7 +365,7 @@ export default function App() {
       const updated = [...completedCheckpoints];
       updated[currentCp - 1] = true;
       setCompletedCheckpoints(updated);
-      const cpName = CHECKPOINTS[currentCp - 1]?.name || `Sector ${currentCp}`;
+      const cpName = currentMaze.checkpoints[currentCp - 1]?.name || `Sector ${currentCp}`;
       if (updated.every(Boolean)) {
         sound.playPortalOnline();
         showToast('⚡ ALL 5 CHECKPOINTS SECURED! EXIT PORTAL ONLINE AT SECTOR OMEGA (BOTTOM-RIGHT) — ESCAPE NOW!');
@@ -361,7 +401,21 @@ export default function App() {
   const handleLoseLife = useCallback(
     async (reason: string) => {
       setLives((prev) => {
-        const next = prev - 1;
+        const next = Math.max(0, prev - 1);
+
+        // Immediate sync to server so player's heart count updates everywhere in real time
+        fetch('/api/player/lose-life', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: runnerId,
+            roomCode,
+            livesRemaining: next,
+            reason,
+            totalTimeSeconds: elapsedSeconds,
+          }),
+        }).catch(() => {});
+
         if (next <= 0) {
           // Game Over
           setGameStatus('GAME_OVER');
@@ -381,13 +435,16 @@ export default function App() {
               reason,
             }),
           }).catch(() => {});
-
-          return 0;
+        } else {
+          showToast(`LOST 1 LIFE! (${next}/5 REMAINING)`);
         }
         return next;
       });
+
+      // Also trigger a refresh of leaderboard to update the row immediately
+      setTimeout(fetchRoomLeaderboard, 80);
     },
-    [completedCheckpoints, elapsedSeconds, roomCode, runnerId, showToast]
+    [completedCheckpoints, elapsedSeconds, fetchRoomLeaderboard, roomCode, runnerId, showToast]
   );
 
   // Touched hazard
@@ -395,10 +452,10 @@ export default function App() {
     sound.playHazardHit();
     setInvulnerableUntil(performance.now() + 2000);
 
-    let respawnPoint = START_POS;
-    for (let i = CHECKPOINTS.length - 1; i >= 0; i--) {
+    let respawnPoint = currentMaze.startPos;
+    for (let i = currentMaze.checkpoints.length - 1; i >= 0; i--) {
       if (completedCheckpoints[i]) {
-        respawnPoint = { c: CHECKPOINTS[i].c, r: CHECKPOINTS[i].r };
+        respawnPoint = { c: currentMaze.checkpoints[i].c, r: currentMaze.checkpoints[i].r };
         break;
       }
     }
@@ -406,7 +463,7 @@ export default function App() {
 
     showToast('HAZARD CONTACT! -1 LIFE (Respawned at safe node)');
     handleLoseLife('Electrocuted by active laser hazard');
-  }, [completedCheckpoints, handleLoseLife, showToast]);
+  }, [completedCheckpoints, currentMaze, handleLoseLife, showToast]);
 
   // Reached exit
   const handleReachExit = async () => {
@@ -447,6 +504,10 @@ export default function App() {
   };
 
   const clearedCount = completedCheckpoints.filter(Boolean).length;
+
+  if (isAdminView) {
+    return <AdminPanel onBackToGame={closeAdmin} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none antialiased">
@@ -554,40 +615,9 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 flex flex-col lg:flex-row gap-4 items-start justify-center">
         {/* Left / Center: Maze Display & HUD */}
         <div className="flex-1 w-full flex flex-col items-center">
-          {/* Quick Mission Guidance Banner */}
-          <div className="w-full mb-2.5 flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 border border-slate-800/80 px-3 py-2 rounded-lg">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-              <span>
-                <strong className="text-cyan-300">Blue Core</strong> = You. Move with{' '}
-                <kbd className="px-1 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-mono text-[10px]">
-                  Arrow Keys
-                </kbd>{' '}
-                or{' '}
-                <kbd className="px-1 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-mono text-[10px]">
-                  WASD
-                </kbd>.
-              </span>
-            </div>
-            <div className="hidden sm:flex items-center gap-3">
-              <span className="flex items-center gap-1 text-red-400 font-medium">
-                <AlertTriangle className="w-3.5 h-3.5" /> Red hazards disappear & reappear — time your dash!
-              </span>
-              {clearedCount === 5 ? (
-                <span className="text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
-                  ⚡ EXIT PORTAL REVEALED IN SECTOR OMEGA!
-                </span>
-              ) : (
-                <span className="text-amber-400 font-medium flex items-center gap-1">
-                  🔒 Exit Cloaked ({clearedCount}/5 Checkpoints)
-                </span>
-              )}
-            </div>
-          </div>
-
           {/* Toast Notification Alert */}
           {toastMessage && (
-            <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-cyan-500/60 text-cyan-200 px-4 py-2 rounded-lg shadow-2xl text-xs sm:text-sm font-['Orbitron'] tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+            <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-cyan-500/60 text-cyan-200 px-4 py-2 rounded-lg shadow-2xl text-xs sm:text-sm font-mono tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
               <Info className="w-4 h-4 text-cyan-400" />
               {toastMessage}
             </div>
@@ -596,6 +626,7 @@ export default function App() {
           {/* Maze Canvas */}
           <div className="w-full relative">
             <MazeCanvas
+              maze={currentMaze}
               playerPos={playerPos}
               onMovePlayer={setPlayerPos}
               completedCheckpoints={completedCheckpoints}
@@ -610,6 +641,7 @@ export default function App() {
             {gameStatus === 'CHECKPOINT_MINIGAME' && activeCheckpointId !== null && (
               <LetterSmasherMinigame
                 checkpointId={activeCheckpointId}
+                checkpointConfig={currentMaze.checkpoints.find((c) => c.id === activeCheckpointId)}
                 lives={lives}
                 onSuccess={handleCheckpointSuccess}
                 onLoseLife={handleLoseLife}

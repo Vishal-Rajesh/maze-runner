@@ -1,321 +1,266 @@
-import { CheckpointConfig, HazardConfig } from '../types';
+import { CheckpointConfig, HazardConfig, MazeData, Point } from '../types';
 
-export const MAZE_COLS = 35;
-export const MAZE_ROWS = 21;
+// ==========================================
+// DYNAMIC PROCEDURAL LABYRINTH GENERATOR
+// Dimension: 43 Columns x 25 Rows (enlarged tactical cyber-grid)
+// 0 = Pathway | 1 = Solid Wall
+// ==========================================
+export const MAZE_COLS = 43;
+export const MAZE_ROWS = 25;
 
-// 1 = Solid Wall, 0 = Walkable Corridor
-// A large, intricate 35x21 sci-fi labyrinth verified by BFS reachability.
-// Features twisting corridors, multiple looping pathways, deceptive dead-ends,
-// and strategic choke points guarding checkpoints and the exit.
-export const MAZE_GRID: number[][] = [
-  /* 0 */ [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-  /* 1 */ [1,0,0,0,1,0,0,0,1,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1],
-  /* 2 */ [1,1,0,0,1,0,1,0,0,0,1,1,0,0,1,0,0,0,1,0,1,1,1,0,0,0,1,1,1,1,0,1,0,0,1],
-  /* 3 */ [1,0,0,0,1,0,1,0,0,0,1,0,0,0,1,0,1,0,0,0,1,0,0,0,1,0,1,0,1,0,0,0,0,0,1],
-  /* 4 */ [1,0,1,1,1,0,0,0,1,1,1,1,1,0,0,0,1,1,1,1,0,0,0,1,1,0,0,0,1,0,0,1,1,0,1],
-  /* 5 */ [1,0,0,0,1,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,1,0,0,0,1,0,1],
-  /* 6 */ [1,1,0,0,1,0,0,1,1,0,1,0,0,0,0,1,1,1,1,0,1,1,1,1,1,1,1,0,1,1,1,0,1,1,1],
-  /* 7 */ [1,0,0,0,1,0,0,0,0,0,1,0,1,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,1],
-  /* 8 */ [1,0,1,1,0,0,1,1,0,1,1,0,1,0,1,1,0,1,1,0,0,0,0,1,1,0,0,1,1,1,1,1,1,0,1],
-  /* 9 */ [1,0,0,0,1,0,0,0,0,0,1,0,1,0,0,0,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,0,1],
-  /*10 */ [1,1,0,0,1,1,0,1,1,1,1,0,0,1,1,1,1,0,0,0,1,1,1,1,1,0,1,0,1,1,0,0,1,0,1],
-  /*11 */ [1,0,0,0,1,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,0,1,0,1,0,0,0,1],
-  /*12 */ [1,0,1,1,1,0,1,1,0,1,1,1,0,0,1,0,1,1,0,0,0,0,1,1,0,1,0,0,0,0,1,1,1,0,1],
-  /*13 */ [1,0,1,0,0,0,1,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,1,0,1],
-  /*14 */ [1,0,1,0,1,0,1,0,0,1,1,0,1,0,1,0,1,1,0,1,1,1,0,0,0,1,1,1,1,0,1,0,1,0,1],
-  /*15 */ [1,0,1,0,1,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,1,0,1,0,1],
-  /*16 */ [1,0,1,0,1,0,1,0,1,0,1,1,1,0,1,1,0,1,1,1,0,0,1,0,1,0,0,1,0,0,1,0,1,0,1],
-  /*17 */ [1,0,1,0,1,0,1,0,1,0,1,0,0,0,1,0,0,0,0,0,0,0,1,0,1,0,1,0,0,0,1,0,1,0,1],
-  /*18 */ [1,0,1,1,1,0,1,0,0,0,1,1,0,1,1,0,1,1,1,1,1,1,1,0,1,0,0,0,1,1,0,1,0,0,1],
-  /*19 */ [1,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,1],
-  /*20 */ [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-];
+/**
+ * Deterministic seeded 32-bit PRNG (Mulberry32)
+ * Ensures all runners joining the same roomCode get the EXACT same maze layout,
+ * checkpoints, and hazard locations, with zero network overhead.
+ */
+function createPrng(seedStr: string): () => number {
+  const clean = seedStr.trim().toUpperCase() || 'LAB-101';
+  let hash = 2166136261;
+  for (let i = 0; i < clean.length; i++) {
+    hash ^= clean.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  let seed = hash >>> 0;
 
-export const START_POS = { c: 1, r: 1 };
-export const EXIT_POS = { c: 33, r: 19 };
+  return function nextFloat(): number {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
-export const CHECKPOINTS: CheckpointConfig[] = [
-  {
-    id: 1,
-    c: 7,
-    r: 3,
-    name: 'Sector Alpha',
-    targetCount: 8,
-    speedMultiplier: 1.1,
-    bombChance: 0.20,
-  },
-  {
-    id: 2,
-    c: 5,
-    r: 17,
-    name: 'Sector Beta',
-    targetCount: 11,
-    speedMultiplier: 1.35,
-    bombChance: 0.24,
-  },
-  {
-    id: 3,
-    c: 17,
-    r: 9,
-    name: 'Sector Gamma',
-    targetCount: 13,
-    speedMultiplier: 1.55,
-    bombChance: 0.28,
-  },
-  {
-    id: 4,
-    c: 29,
-    r: 3,
-    name: 'Sector Delta',
-    targetCount: 15,
-    speedMultiplier: 1.75,
-    bombChance: 0.32,
-  },
-  {
-    id: 5,
-    c: 27,
-    r: 17,
-    name: 'Sector Epsilon',
-    targetCount: 18,
-    speedMultiplier: 1.95,
-    bombChance: 0.36,
-  },
-];
+/**
+ * Generate a complete, balanced, and solvable dynamic maze for a given roomCode
+ */
+export function generateMazeForRoom(roomCode: string): MazeData {
+  const prng = createPrng(roomCode);
+  const cols = MAZE_COLS;
+  const rows = MAZE_ROWS;
 
-// Disappearing & reappearing hazards positioned across key choke points and corridors
-export const HAZARDS: HazardConfig[] = [
-  {
-    id: 'hz-1',
-    c: 3,
-    r: 1,
-    periodMs: 2800,
-    activeDurationMs: 1500,
-    offsetMs: 0,
-    label: 'Laser Gate 1',
-  },
-  {
-    id: 'hz-2',
-    c: 11,
-    r: 1,
-    periodMs: 2600,
-    activeDurationMs: 1300,
-    offsetMs: 600,
-    label: 'Arc Discharge 2',
-  },
-  {
-    id: 'hz-3',
-    c: 21,
-    r: 1,
-    periodMs: 2900,
-    activeDurationMs: 1500,
-    offsetMs: 1200,
-    label: 'Pulse Mine 3',
-  },
-  {
-    id: 'hz-4',
-    c: 3,
-    r: 3,
-    periodMs: 3100,
-    activeDurationMs: 1600,
-    offsetMs: 400,
-    label: 'Laser Barrier 4',
-  },
-  {
-    id: 'hz-5',
-    c: 13,
-    r: 3,
-    periodMs: 2700,
-    activeDurationMs: 1400,
-    offsetMs: 1000,
-    label: 'Arc Discharge 5',
-  },
-  {
-    id: 'hz-6',
-    c: 23,
-    r: 3,
-    periodMs: 3000,
-    activeDurationMs: 1500,
-    offsetMs: 1500,
-    label: 'Plasma Spike 6',
-  },
-  {
-    id: 'hz-7',
-    c: 7,
-    r: 5,
-    periodMs: 2800,
-    activeDurationMs: 1400,
-    offsetMs: 500,
-    label: 'Laser Gate 7',
-  },
-  {
-    id: 'hz-8',
-    c: 17,
-    r: 5,
-    periodMs: 2600,
-    activeDurationMs: 1300,
-    offsetMs: 900,
-    label: 'Plasma Spike 8',
-  },
-  {
-    id: 'hz-9',
-    c: 27,
-    r: 5,
-    periodMs: 3200,
-    activeDurationMs: 1600,
-    offsetMs: 200,
-    label: 'Arc Discharge 9',
-  },
-  {
-    id: 'hz-10',
-    c: 3,
-    r: 7,
-    periodMs: 2900,
-    activeDurationMs: 1500,
-    offsetMs: 800,
-    label: 'Laser Gate 10',
-  },
-  {
-    id: 'hz-11',
-    c: 13,
-    r: 7,
-    periodMs: 2500,
-    activeDurationMs: 1200,
-    offsetMs: 300,
-    label: 'Plasma Arc 11',
-  },
-  {
-    id: 'hz-12',
-    c: 23,
-    r: 7,
-    periodMs: 2800,
-    activeDurationMs: 1400,
-    offsetMs: 1400,
-    label: 'Arc Discharge 12',
-  },
-  {
-    id: 'hz-13',
-    c: 7,
-    r: 9,
-    periodMs: 3000,
-    activeDurationMs: 1500,
-    offsetMs: 700,
-    label: 'Laser Barrier 13',
-  },
-  {
-    id: 'hz-14',
-    c: 21,
-    r: 9,
-    periodMs: 2700,
-    activeDurationMs: 1300,
-    offsetMs: 1100,
-    label: 'Plasma Arc 14',
-  },
-  {
-    id: 'hz-15',
-    c: 15,
-    r: 11,
-    periodMs: 2900,
-    activeDurationMs: 1400,
-    offsetMs: 400,
-    label: 'Core Barrier 15',
-  },
-  {
-    id: 'hz-16',
-    c: 25,
-    r: 11,
-    periodMs: 2600,
-    activeDurationMs: 1300,
-    offsetMs: 800,
-    label: 'Arc Discharge 16',
-  },
-  {
-    id: 'hz-17',
-    c: 7,
-    r: 13,
-    periodMs: 3100,
-    activeDurationMs: 1500,
-    offsetMs: 1200,
-    label: 'Laser Gate 17',
-  },
-  {
-    id: 'hz-18',
-    c: 19,
-    r: 13,
-    periodMs: 2800,
-    activeDurationMs: 1400,
-    offsetMs: 600,
-    label: 'Plasma Arc 18',
-  },
-  {
-    id: 'hz-19',
-    c: 31,
-    r: 13,
-    periodMs: 2700,
-    activeDurationMs: 1300,
-    offsetMs: 1500,
-    label: 'Sector Omega Defense 19',
-  },
-  {
-    id: 'hz-20',
-    c: 3,
-    r: 15,
-    periodMs: 3000,
-    activeDurationMs: 1500,
-    offsetMs: 300,
-    label: 'Laser Barrier 20',
-  },
-  {
-    id: 'hz-21',
-    c: 17,
-    r: 15,
-    periodMs: 2800,
-    activeDurationMs: 1400,
-    offsetMs: 1000,
-    label: 'Plasma Spike 21',
-  },
-  {
-    id: 'hz-22',
-    c: 23,
-    r: 17,
-    periodMs: 2900,
-    activeDurationMs: 1400,
-    offsetMs: 500,
-    label: 'Laser Gate 22',
-  },
-  {
-    id: 'hz-23',
-    c: 5,
-    r: 19,
-    periodMs: 3200,
-    activeDurationMs: 1600,
-    offsetMs: 700,
-    label: 'Laser Barrier 23',
-  },
-  {
-    id: 'hz-24',
-    c: 15,
-    r: 19,
-    periodMs: 2700,
-    activeDurationMs: 1300,
-    offsetMs: 1200,
-    label: 'Plasma Arc 24',
-  },
-  {
-    id: 'hz-25',
-    c: 27,
-    r: 19,
-    periodMs: 2600,
-    activeDurationMs: 1300,
-    offsetMs: 400,
-    label: 'Omega Gate Barrier 25',
-  },
-  {
-    id: 'hz-26',
-    c: 31,
-    r: 19,
-    periodMs: 2500,
-    activeDurationMs: 1200,
-    offsetMs: 900,
-    label: 'Final Extraction Laser 26',
-  },
-];
+  // 1. Initialize grid filled with solid cyber walls (1)
+  const grid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(1));
+
+  // 2. Randomized Depth-First Search (Recursive Backtracker) on odd grid nodes
+  // Guarantees 100% full connectivity of all pathway corridors without islands.
+  const visited: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
+  const stack: Point[] = [{ c: 1, r: 1 }];
+  grid[1][1] = 0;
+  visited[1][1] = true;
+
+  const DIRS = [
+    { dc: 0, dr: -2 }, // Up
+    { dc: 0, dr: 2 },  // Down
+    { dc: -2, dr: 0 }, // Left
+    { dc: 2, dr: 0 },  // Right
+  ];
+
+  while (stack.length > 0) {
+    const curr = stack[stack.length - 1];
+    const unvisited: { next: Point; wall: Point }[] = [];
+
+    for (const d of DIRS) {
+      const nc = curr.c + d.dc;
+      const nr = curr.r + d.dr;
+      if (nc >= 1 && nc <= cols - 2 && nr >= 1 && nr <= rows - 2 && !visited[nr][nc]) {
+        unvisited.push({
+          next: { c: nc, r: nr },
+          wall: { c: curr.c + d.dc / 2, r: curr.r + d.dr / 2 },
+        });
+      }
+    }
+
+    if (unvisited.length > 0) {
+      const idx = Math.floor(prng() * unvisited.length);
+      const chosen = unvisited[idx];
+      grid[chosen.wall.r][chosen.wall.c] = 0;
+      grid[chosen.next.r][chosen.next.c] = 0;
+      visited[chosen.next.r][chosen.next.c] = true;
+      stack.push(chosen.next);
+    } else {
+      stack.pop();
+    }
+  }
+
+  // 3. Braiding & Tactical Loops: Knock down select walls between pathways
+  // This creates multiple routes, flanking corridors, and escape bypasses around laser barriers
+  for (let r = 2; r < rows - 2; r++) {
+    for (let c = 2; c < cols - 2; c++) {
+      if (grid[r][c] === 1) {
+        const horizontal = grid[r][c - 1] === 0 && grid[r][c + 1] === 0;
+        const vertical = grid[r - 1][c] === 0 && grid[r + 1][c] === 0;
+        if ((horizontal || vertical) && prng() < 0.22) {
+          grid[r][c] = 0;
+        }
+      }
+    }
+  }
+
+  // 4. Ensure Start (1, 1) and Exit (cols - 2, rows - 2) zones are open
+  const startPos: Point = { c: 1, r: 1 };
+  const exitPos: Point = { c: cols - 2, r: rows - 2 };
+
+  grid[1][1] = 0;
+  grid[1][2] = 0;
+  grid[2][1] = 0;
+
+  grid[exitPos.r][exitPos.c] = 0;
+  grid[exitPos.r][exitPos.c - 1] = 0;
+  grid[exitPos.r - 1][exitPos.c] = 0;
+
+  // 5. Place 5 Strategic Checkpoints in 5 Distinct Sectors
+  const sectorBounds = [
+    { name: 'Sector Alpha', cMin: 7, cMax: 13, rMin: 3, rMax: 7, targetCount: 9, speedMultiplier: 1.15, bombChance: 0.22 },
+    { name: 'Sector Beta', cMin: 7, cMax: 13, rMin: 17, rMax: 21, targetCount: 12, speedMultiplier: 1.40, bombChance: 0.26 },
+    { name: 'Sector Gamma', cMin: 19, cMax: 25, rMin: 11, rMax: 15, targetCount: 15, speedMultiplier: 1.65, bombChance: 0.30 },
+    { name: 'Sector Delta', cMin: 29, cMax: 37, rMin: 3, rMax: 7, targetCount: 18, speedMultiplier: 1.85, bombChance: 0.34 },
+    { name: 'Sector Epsilon', cMin: 29, cMax: 37, rMin: 15, rMax: 19, targetCount: 22, speedMultiplier: 2.10, bombChance: 0.38 },
+  ];
+
+  const checkpoints: CheckpointConfig[] = sectorBounds.map((sec, idx) => {
+    // Find odd coordinates in this sector (guaranteed open by DFS)
+    const validPoints: Point[] = [];
+    for (let r = sec.rMin; r <= sec.rMax; r++) {
+      for (let c = sec.cMin; c <= sec.cMax; c++) {
+        if (grid[r][c] === 0) {
+          validPoints.push({ c, r });
+        }
+      }
+    }
+
+    let pos: Point;
+    if (validPoints.length > 0) {
+      const pIdx = Math.floor(prng() * validPoints.length);
+      pos = validPoints[pIdx];
+    } else {
+      // Fallback: force open a cell in the center of the sector
+      const fc = Math.floor((sec.cMin + sec.cMax) / 2) | 1;
+      const fr = Math.floor((sec.rMin + sec.rMax) / 2) | 1;
+      grid[fr][fc] = 0;
+      grid[fr][fc + 1] = 0;
+      pos = { c: fc, r: fr };
+    }
+
+    // Ensure checkpoint has at least 2 open pathways around it
+    if (pos.c + 1 < cols - 1) grid[pos.r][pos.c + 1] = 0;
+    if (pos.c - 1 > 0) grid[pos.r][pos.c - 1] = 0;
+
+    return {
+      id: idx + 1,
+      c: pos.c,
+      r: pos.r,
+      name: sec.name,
+      targetCount: sec.targetCount,
+      speedMultiplier: sec.speedMultiplier,
+      bombChance: sec.bombChance,
+    };
+  });
+
+  // 6. Place 36 Dynamic Hazards (Laser Gates, Arc Barriers, Plasma Spikes)
+  const candidateCells: Point[] = [];
+  for (let r = 1; r < rows - 1; r++) {
+    for (let c = 1; c < cols - 1; c++) {
+      if (grid[r][c] !== 0) continue;
+
+      // Safe zone near start
+      const distStart = Math.abs(c - startPos.c) + Math.abs(r - startPos.r);
+      if (distStart <= 3) continue;
+
+      // Safe zone near exit
+      const distExit = Math.abs(c - exitPos.c) + Math.abs(r - exitPos.r);
+      if (distExit <= 2) continue;
+
+      // Safe zone near checkpoints
+      let nearCheckpoint = false;
+      for (const cp of checkpoints) {
+        const distCp = Math.abs(c - cp.c) + Math.abs(r - cp.r);
+        if (distCp <= 1) {
+          nearCheckpoint = true;
+          break;
+        }
+      }
+      if (nearCheckpoint) continue;
+
+      candidateCells.push({ c, r });
+    }
+  }
+
+  // Shuffle candidate cells using seeded PRNG (Fisher-Yates)
+  for (let i = candidateCells.length - 1; i > 0; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    const tmp = candidateCells[i];
+    candidateCells[i] = candidateCells[j];
+    candidateCells[j] = tmp;
+  }
+
+  const hazards: HazardConfig[] = [];
+  const occupiedHazardCoords = new Set<string>();
+  const TARGET_HAZARD_COUNT = 36;
+
+  for (const pt of candidateCells) {
+    if (hazards.length >= TARGET_HAZARD_COUNT) break;
+
+    // Check that no adjacent cell has a hazard to prevent impassable choke bottlenecks
+    let neighborHasHazard = false;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (occupiedHazardCoords.has(`${pt.c + dc},${pt.r + dr}`)) {
+          neighborHasHazard = true;
+          break;
+        }
+      }
+      if (neighborHasHazard) break;
+    }
+
+    if (neighborHasHazard) continue;
+
+    occupiedHazardCoords.add(`${pt.c},${pt.r}`);
+    const hzIndex = hazards.length + 1;
+    const periodMs = 2300 + Math.floor(prng() * 450); // 2300ms - 2750ms
+    const activeDurationMs = 1450 + Math.floor(prng() * 200); // 1450ms - 1650ms
+    const offsetMs = Math.floor(prng() * 2000);
+
+    const hazardType = hzIndex % 3 === 0 ? 'Plasma Spike' : hzIndex % 2 === 0 ? 'Arc Barrier' : 'Laser Gate';
+
+    hazards.push({
+      id: `hz-${hzIndex}`,
+      c: pt.c,
+      r: pt.r,
+      periodMs,
+      activeDurationMs,
+      offsetMs,
+      label: `${hazardType} ${hzIndex}`,
+    });
+  }
+
+  return {
+    cols,
+    rows,
+    grid,
+    startPos,
+    exitPos,
+    checkpoints,
+    hazards,
+  };
+}
+
+// In-memory cache to guarantee referential stability per roomCode
+const mazeCache = new Map<string, MazeData>();
+
+export function getMazeForRoom(roomCode: string): MazeData {
+  const key = (roomCode || 'LAB-101').trim().toUpperCase();
+  let data = mazeCache.get(key);
+  if (!data) {
+    data = generateMazeForRoom(key);
+    mazeCache.set(key, data);
+  }
+  return data;
+}
+
+// Default static exports for backward compatibility
+export const DEFAULT_MAZE: MazeData = getMazeForRoom('LAB-101');
+export const START_POS: Point = DEFAULT_MAZE.startPos;
+export const EXIT_POS: Point = DEFAULT_MAZE.exitPos;
+export const CHECKPOINTS: CheckpointConfig[] = DEFAULT_MAZE.checkpoints;
+export const HAZARDS: HazardConfig[] = DEFAULT_MAZE.hazards;
+export const MAZE_GRID: number[][] = DEFAULT_MAZE.grid;

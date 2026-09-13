@@ -382,6 +382,38 @@ apiRouter.post('/player/gameover', (req, res) => {
   res.json({ success: true, player });
 });
 
+// Immediate sync when player loses a life (hazard or minigame bomb/miss)
+apiRouter.post('/player/lose-life', (req, res) => {
+  const { id, roomCode, livesRemaining, reason, totalTimeSeconds } = req.body;
+  const cleanCode = sanitizeRoomCode(roomCode);
+  const room = rooms.get(cleanCode);
+
+  if (room) {
+    const player = room.players.get(id);
+    if (player) {
+      player.lastActive = Date.now();
+      player.livesRemaining = Math.max(0, Number(livesRemaining));
+      if (totalTimeSeconds !== undefined) player.totalTimeSeconds = Number(totalTimeSeconds);
+
+      if (player.livesRemaining <= 0) {
+        player.status = 'ELIMINATED';
+        broadcastToRoom(cleanCode, 'player_eliminated', {
+          playerId: id,
+          playerName: player.name,
+          checkpointsCleared: player.checkpointsCleared,
+          timeSeconds: player.totalTimeSeconds,
+          reason: reason || 'Lost all lives',
+        });
+      }
+
+      persistData();
+      broadcastToRoom(cleanCode, 'leaderboard_update', getSortedRoomLeaderboard(cleanCode));
+    }
+  }
+
+  res.json({ success: true });
+});
+
 // Heartbeat to keep live presence inside room
 apiRouter.post('/player/heartbeat', (req, res) => {
   const { id, totalTimeSeconds, livesRemaining, status, roomCode } = req.body;
@@ -402,6 +434,82 @@ apiRouter.post('/player/heartbeat', (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+// --- ADMIN API ENDPOINTS ---
+// 1. Admin Overview: returns all rooms, players, and aggregate stats
+apiRouter.get('/admin/overview', (_req, res) => {
+  const roomList = Array.from(rooms.values()).map((r) => {
+    const pList = Array.from(r.players.values()).map((p) => ({
+      ...p,
+      isOnline: Date.now() - p.lastActive < 45000,
+    }));
+
+    return {
+      code: r.code,
+      createdAt: r.createdAt,
+      playerCount: pList.length,
+      players: pList,
+    };
+  });
+
+  let totalPlayers = 0;
+  let escapedCount = 0;
+  let eliminatedCount = 0;
+  let activeCount = 0;
+
+  roomList.forEach((r) => {
+    totalPlayers += r.players.length;
+    r.players.forEach((p) => {
+      if (p.status === 'ESCAPED') escapedCount++;
+      else if (p.status === 'ELIMINATED') eliminatedCount++;
+      else activeCount++;
+    });
+  });
+
+  res.json({
+    stats: {
+      totalRooms: roomList.length,
+      totalPlayers,
+      escapedCount,
+      eliminatedCount,
+      activeCount,
+    },
+    rooms: roomList,
+  });
+});
+
+// 2. Admin: Reset a room (removes all players or re-initializes room)
+apiRouter.post('/admin/room/reset', (req, res) => {
+  const { roomCode } = req.body;
+  const cleanCode = sanitizeRoomCode(roomCode);
+  const room = rooms.get(cleanCode);
+
+  if (room) {
+    room.players.clear();
+    persistData();
+    broadcastToRoom(cleanCode, 'leaderboard_update', []);
+    res.json({ success: true, message: `Room ${cleanCode} reset successfully` });
+  } else {
+    res.status(404).json({ error: 'Room not found' });
+  }
+});
+
+// 3. Admin: Kick/remove a player from a room
+apiRouter.post('/admin/player/kick', (req, res) => {
+  const { roomCode, playerId } = req.body;
+  const cleanCode = sanitizeRoomCode(roomCode);
+  const room = rooms.get(cleanCode);
+
+  if (room && room.players.has(playerId)) {
+    const kicked = room.players.get(playerId);
+    room.players.delete(playerId);
+    persistData();
+    broadcastToRoom(cleanCode, 'leaderboard_update', getSortedRoomLeaderboard(cleanCode));
+    res.json({ success: true, message: `Player ${kicked?.name} kicked from room ${cleanCode}` });
+  } else {
+    res.status(404).json({ error: 'Player or room not found' });
+  }
 });
 
 // Mount on both `/api` (when full path is preserved) and `/` (when Vercel strips /api in function handler)

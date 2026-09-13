@@ -326,7 +326,13 @@ export default function App() {
       updated[currentCp - 1] = true;
       setCompletedCheckpoints(updated);
       const cpName = CHECKPOINTS[currentCp - 1]?.name || `Sector ${currentCp}`;
-      showToast(`CHECKPOINT ${currentCp} (${cpName}) SECURED!`);
+      if (updated.every(Boolean)) {
+        sound.playPortalOnline();
+        showToast('⚡ ALL 5 CHECKPOINTS SECURED! EXIT PORTAL ONLINE AT SECTOR OMEGA (BOTTOM-RIGHT) — ESCAPE NOW!');
+      } else {
+        const remaining = 5 - updated.filter(Boolean).length;
+        showToast(`CHECKPOINT ${currentCp} (${cpName}) SECURED! [${remaining} MORE TO REVEAL EXIT]`);
+      }
 
       // Broadcast checkpoint progress to current room
       try {
@@ -567,9 +573,15 @@ export default function App() {
               <span className="flex items-center gap-1 text-red-400 font-medium">
                 <AlertTriangle className="w-3.5 h-3.5" /> Red hazards disappear & reappear — time your dash!
               </span>
-              <span className="text-emerald-400 font-medium">
-                Exit requires {clearedCount}/5 Checkpoints
-              </span>
+              {clearedCount === 5 ? (
+                <span className="text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
+                  ⚡ EXIT PORTAL REVEALED IN SECTOR OMEGA!
+                </span>
+              ) : (
+                <span className="text-amber-400 font-medium flex items-center gap-1">
+                  🔒 Exit Cloaked ({clearedCount}/5 Checkpoints)
+                </span>
+              )}
             </div>
           </div>
 

@@ -22,7 +22,7 @@ interface MazeCanvasProps {
   invulnerableUntil: number;
 }
 
-const CELL_SIZE = 40; // 25 cols * 40 = 1000px, 15 rows * 40 = 600px
+const CELL_SIZE = 30; // 35 cols * 30 = 1050px, 21 rows * 30 = 630px
 
 export const MazeCanvas: React.FC<MazeCanvasProps> = ({
   playerPos,
@@ -43,6 +43,8 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
   const lastMoveTimeRef = useRef(0);
   const activeKeysRef = useRef<{ [key: string]: boolean }>({});
 
+  const allCleared = completedCheckpoints.every(Boolean);
+
   // Helper to check if a hazard is currently active
   const isHazardDangerous = useCallback((hz: (typeof HAZARDS)[0], now: number) => {
     const cycleTime = (now + hz.offsetMs) % hz.periodMs;
@@ -53,7 +55,7 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
   const executeMove = useCallback(
     (dc: number, dr: number) => {
       const now = performance.now();
-      if (now - lastMoveTimeRef.current < 110) return; // movement rate limiter for precision
+      if (now - lastMoveTimeRef.current < 95) return; // Responsive movement rate limiter
 
       const targetC = playerPos.c + dc;
       const targetR = playerPos.r + dr;
@@ -61,9 +63,8 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
       // Bounds check
       if (targetC < 0 || targetC >= MAZE_COLS || targetR < 0 || targetR >= MAZE_ROWS) return;
 
-      // Wall collision check: 1 is solid wall!
+      // Wall collision check: 1 is solid wall
       if (MAZE_GRID[targetR][targetC] === 1) {
-        // Can't move into wall
         return;
       }
 
@@ -91,16 +92,15 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
 
       // Check if stepped on exit
       if (targetC === EXIT_POS.c && targetR === EXIT_POS.r) {
-        const allCleared = completedCheckpoints.every(Boolean);
         if (allCleared) {
           onReachExit();
         } else {
           const clearedCount = completedCheckpoints.filter(Boolean).length;
-          onShowWarning(`SECURITY LOCK: ALL 5 CHECKPOINTS REQUIRED! (${clearedCount}/5 CLEARED)`);
+          onShowWarning(`EXIT PORTAL CLOAKED: ALL 5 CHECKPOINTS REQUIRED! (${clearedCount}/5 COMPLETED)`);
         }
       }
     },
-    [completedCheckpoints, onMovePlayer, onReachExit, onShowWarning, onTriggerCheckpoint, playerPos]
+    [allCleared, completedCheckpoints, onMovePlayer, onReachExit, onShowWarning, onTriggerCheckpoint, playerPos]
   );
 
   // Keyboard Event Listeners for Arrow keys & WASD
@@ -156,8 +156,8 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
       // Smooth player render interpolation
       const targetX = playerPos.c * CELL_SIZE + CELL_SIZE / 2;
       const targetY = playerPos.r * CELL_SIZE + CELL_SIZE / 2;
-      playerRenderPosRef.current.x += (targetX - playerRenderPosRef.current.x) * 0.35;
-      playerRenderPosRef.current.y += (targetY - playerRenderPosRef.current.y) * 0.35;
+      playerRenderPosRef.current.x += (targetX - playerRenderPosRef.current.x) * 0.4;
+      playerRenderPosRef.current.y += (targetY - playerRenderPosRef.current.y) * 0.4;
 
       // Hazard Collision Check
       if (!isInvulnerable) {
@@ -176,7 +176,7 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Floor cyber grid pattern
-      ctx.strokeStyle = 'rgba(26, 32, 60, 0.4)';
+      ctx.strokeStyle = 'rgba(26, 32, 60, 0.45)';
       ctx.lineWidth = 1;
       for (let c = 0; c <= MAZE_COLS; c++) {
         ctx.beginPath();
@@ -192,7 +192,6 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
       }
 
       // --- 2. RENDER MAZE WALLS ---
-      // Actual maze walls with distinct bevel, metallic tech face, and glowing sci-fi borders
       for (let r = 0; r < MAZE_ROWS; r++) {
         for (let c = 0; c < MAZE_COLS; c++) {
           if (MAZE_GRID[r][c] === 1) {
@@ -200,19 +199,19 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
             const wy = r * CELL_SIZE;
 
             // Base dark wall block
-            ctx.fillStyle = '#11152a';
+            ctx.fillStyle = '#0f1325';
             ctx.fillRect(wx, wy, CELL_SIZE, CELL_SIZE);
 
-            // Wall inner texture
-            ctx.fillStyle = '#181f3d';
+            // Wall inner metallic face
+            ctx.fillStyle = '#161c36';
             ctx.fillRect(wx + 2, wy + 2, CELL_SIZE - 4, CELL_SIZE - 4);
 
             // Tech center core
-            ctx.fillStyle = '#0f142b';
-            ctx.fillRect(wx + 6, wy + 6, CELL_SIZE - 12, CELL_SIZE - 12);
+            ctx.fillStyle = '#0b0f20';
+            ctx.fillRect(wx + 5, wy + 5, CELL_SIZE - 10, CELL_SIZE - 10);
 
-            // Subtle neon border accent on perimeter
-            ctx.strokeStyle = 'rgba(79, 70, 229, 0.35)';
+            // Subtle neon border accent
+            ctx.strokeStyle = 'rgba(99, 102, 241, 0.35)';
             ctx.lineWidth = 1;
             ctx.strokeRect(wx + 0.5, wy + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
           }
@@ -226,39 +225,68 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
         ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
         ctx.fillRect(sx, sy, CELL_SIZE, CELL_SIZE);
         ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(sx + 3, sy + 3, CELL_SIZE - 6, CELL_SIZE - 6);
-        ctx.font = 'bold 9px Orbitron, monospace';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx + 2, sy + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        ctx.font = 'bold 8px Orbitron, monospace';
         ctx.fillStyle = '#38bdf8';
         ctx.textAlign = 'center';
-        ctx.fillText('START', sx + CELL_SIZE / 2, sy + CELL_SIZE - 6);
+        ctx.fillText('START', sx + CELL_SIZE / 2, sy + CELL_SIZE - 5);
       }
 
-      // --- 4. RENDER EXIT GATEWAY ---
+      // --- 4. RENDER EXIT GATEWAY (REVEALED ONLY WHEN ALL 5 CHECKPOINTS ARE COMPLETED) ---
       {
         const ex = EXIT_POS.c * CELL_SIZE;
         const ey = EXIT_POS.r * CELL_SIZE;
-        const allCleared = completedCheckpoints.every(Boolean);
 
-        // Background zone
-        ctx.fillStyle = allCleared ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.15)';
-        ctx.fillRect(ex, ey, CELL_SIZE, CELL_SIZE);
+        if (allCleared) {
+          // ================= REVEALED EXIT PORTAL =================
+          ctx.save();
+          const portalPulse = Math.sin(now / 120) * 2.5;
 
-        // Pulsing portal ring
-        const portalPulse = Math.sin(now / 150) * 3;
-        ctx.strokeStyle = allCleared ? '#10b981' : '#f43f5e';
-        ctx.shadowColor = allCleared ? '#10b981' : '#f43f5e';
-        ctx.shadowBlur = allCleared ? 15 : 6;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.arc(ex + CELL_SIZE / 2, ey + CELL_SIZE / 2, 14 + portalPulse, 0, Math.PI * 2);
-        ctx.stroke();
+          // Glowing background hyper-field
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.35)';
+          ctx.fillRect(ex + 1, ey + 1, CELL_SIZE - 2, CELL_SIZE - 2);
 
-        ctx.font = 'bold 9px Orbitron, monospace';
-        ctx.fillStyle = allCleared ? '#34d399' : '#fda4af';
-        ctx.textAlign = 'center';
-        ctx.fillText(allCleared ? 'EXIT' : 'LOCK', ex + CELL_SIZE / 2, ey + CELL_SIZE / 2 + 3);
-        ctx.shadowBlur = 0;
+          ctx.shadowColor = '#10b981';
+          ctx.shadowBlur = 20;
+
+          // Rotating vortex energy rays
+          ctx.translate(ex + CELL_SIZE / 2, ey + CELL_SIZE / 2);
+          ctx.rotate(now / 500);
+
+          for (let i = 0; i < 6; i++) {
+            ctx.rotate((Math.PI * 2) / 6);
+            ctx.strokeStyle = 'rgba(52, 211, 153, 0.75)';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(12 + portalPulse, 0);
+            ctx.stroke();
+          }
+
+          // Pulsing portal ring
+          ctx.rotate(-now / 250);
+          ctx.strokeStyle = '#34d399';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, 10 + portalPulse, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Radiant white core
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.restore();
+
+          // High visibility text label
+          ctx.font = '900 8px Orbitron, monospace';
+          ctx.fillStyle = '#6ee7b7';
+          ctx.textAlign = 'center';
+          ctx.fillText('EXIT', ex + CELL_SIZE / 2, ey + CELL_SIZE - 3);
+        }
+        // When not all cleared, the exit tile remains completely cloaked / blended into floor
       }
 
       // --- 5. RENDER HAZARDS (DISAPPEARING / REAPPEARING) ---
@@ -270,13 +298,13 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
 
         ctx.save();
         if (isDangerous) {
-          // ACTIVE HAZARD: Fiery Pulsing Crimson Node & Arc Spikes
-          const pulse = Math.sin(now / 80) * 3;
+          // ACTIVE HAZARD: Crimson Node & Arc Spikes
+          const pulse = Math.sin(now / 75) * 2;
           ctx.shadowColor = '#ff003c';
-          ctx.shadowBlur = 18;
+          ctx.shadowBlur = 14;
 
           // Glowing background hazard zone
-          ctx.fillStyle = 'rgba(255, 0, 60, 0.3)';
+          ctx.fillStyle = 'rgba(255, 0, 60, 0.28)';
           ctx.fillRect(
             hz.c * CELL_SIZE + 2,
             hz.r * CELL_SIZE + 2,
@@ -286,10 +314,10 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
 
           // Danger diamond / spike icon
           ctx.translate(hx, hy);
-          ctx.rotate(now / 400);
+          ctx.rotate(now / 350);
           ctx.fillStyle = '#ff1744';
           ctx.beginPath();
-          const s = 14 + pulse;
+          const s = 11 + pulse;
           ctx.moveTo(0, -s);
           ctx.lineTo(s * 0.4, -s * 0.4);
           ctx.lineTo(s, 0);
@@ -304,14 +332,14 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
           // Center white hot warning core
           ctx.fillStyle = '#ffffff';
           ctx.beginPath();
-          ctx.arc(0, 0, 4, 0, Math.PI * 2);
+          ctx.arc(0, 0, 3, 0, Math.PI * 2);
           ctx.fill();
         } else {
           // INACTIVE HAZARD (ESCAPE GAP): Dimmed dormant silhouette + circular recharge progress
           const rechargeProgress =
             (cycleTime - hz.activeDurationMs) / (hz.periodMs - hz.activeDurationMs);
 
-          ctx.fillStyle = 'rgba(255, 23, 68, 0.05)';
+          ctx.fillStyle = 'rgba(255, 23, 68, 0.04)';
           ctx.fillRect(
             hz.c * CELL_SIZE + 2,
             hz.r * CELL_SIZE + 2,
@@ -320,21 +348,21 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
           );
 
           // Faint outline ring
-          ctx.strokeStyle = 'rgba(255, 80, 80, 0.3)';
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = 'rgba(255, 80, 80, 0.25)';
+          ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.arc(hx, hy, 12, 0, Math.PI * 2);
+          ctx.arc(hx, hy, 9, 0, Math.PI * 2);
           ctx.stroke();
 
           // Charging arc showing player when it will reactivate
-          ctx.strokeStyle = 'rgba(255, 50, 50, 0.8)';
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(255, 50, 50, 0.75)';
+          ctx.lineWidth = 1.8;
           ctx.beginPath();
-          ctx.arc(hx, hy, 12, -Math.PI / 2, -Math.PI / 2 + rechargeProgress * Math.PI * 2);
+          ctx.arc(hx, hy, 9, -Math.PI / 2, -Math.PI / 2 + rechargeProgress * Math.PI * 2);
           ctx.stroke();
 
           ctx.fillStyle = 'rgba(255, 120, 120, 0.6)';
-          ctx.font = '8px monospace';
+          ctx.font = '7px monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('SAFE', hx, hy);
@@ -353,77 +381,94 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
           // CLEARED CHECKPOINT: Emerald Green Emblem
           ctx.strokeStyle = '#10b981';
           ctx.fillStyle = '#064e3b';
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(cx, cy, 15, 0, Math.PI * 2);
+          ctx.arc(cx, cy, 11, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
 
           ctx.fillStyle = '#34d399';
-          ctx.font = 'bold 12px Orbitron, monospace';
+          ctx.font = 'bold 10px Orbitron, monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('✓', cx, cy);
         } else {
           // ACTIVE CHECKPOINT: Pulsing Amber Golden Beacon
-          const pulse = Math.sin(now / 200 + cp.id) * 3;
+          const pulse = Math.sin(now / 180 + cp.id) * 2;
           ctx.shadowColor = '#f59e0b';
-          ctx.shadowBlur = 14;
+          ctx.shadowBlur = 12;
 
           // Outer beacon ring
           ctx.strokeStyle = '#fbbf24';
-          ctx.lineWidth = 2.5;
+          ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(cx, cy, 16 + pulse, 0, Math.PI * 2);
+          ctx.arc(cx, cy, 11 + pulse, 0, Math.PI * 2);
           ctx.stroke();
 
           // Inner disc
           ctx.fillStyle = '#1e1b4b';
           ctx.beginPath();
-          ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+          ctx.arc(cx, cy, 9, 0, Math.PI * 2);
           ctx.fill();
 
           // Checkpoint Number
           ctx.fillStyle = '#fef08a';
-          ctx.font = '900 13px Orbitron, sans-serif';
+          ctx.font = '900 10px Orbitron, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(String(cp.id), cx, cy + 1);
+          ctx.fillText(String(cp.id), cx, cy);
         }
         ctx.restore();
       });
 
-      // --- 7. RENDER PLAYER TRAIL PARTICLES ---
+      // --- 7. WAYPOINT GUIDANCE BEAM (WHEN EXIT PORTAL IS REVEALED) ---
+      if (allCleared) {
+        const px = playerRenderPosRef.current.x;
+        const py = playerRenderPosRef.current.y;
+        const ex = EXIT_POS.c * CELL_SIZE + CELL_SIZE / 2;
+        const ey = EXIT_POS.r * CELL_SIZE + CELL_SIZE / 2;
+
+        ctx.save();
+        ctx.strokeStyle = `rgba(52, 211, 153, ${0.35 + Math.sin(now / 150) * 0.2})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.lineDashOffset = -now / 20;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // --- 8. RENDER PLAYER TRAIL PARTICLES ---
       trailParticlesRef.current.forEach((tp) => {
-        tp.alpha -= 0.04;
+        tp.alpha -= 0.045;
         if (tp.alpha > 0) {
           ctx.save();
-          ctx.fillStyle = `rgba(0, 240, 255, ${tp.alpha * 0.4})`;
+          ctx.fillStyle = `rgba(0, 240, 255, ${tp.alpha * 0.35})`;
           ctx.beginPath();
-          ctx.arc(tp.x, tp.y, 8 * tp.alpha, 0, Math.PI * 2);
+          ctx.arc(tp.x, tp.y, 6 * tp.alpha, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
         }
       });
       trailParticlesRef.current = trailParticlesRef.current.filter((tp) => tp.alpha > 0);
 
-      // --- 8. RENDER PLAYER (THE BLUE THING) ---
+      // --- 9. RENDER PLAYER (THE BLUE DRONE) ---
       const px = playerRenderPosRef.current.x;
       const py = playerRenderPosRef.current.y;
 
       ctx.save();
-      // Blinking if invulnerable
       if (isInvulnerable && Math.floor(now / 100) % 2 === 0) {
         ctx.globalAlpha = 0.35;
       }
 
-      // Outer Cyan Ion Glow
+      // Outer Cyan Glow
       ctx.shadowColor = '#00f0ff';
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 16;
 
-      // Drone Core Outer Ring
-      const corePulse = Math.sin(now / 150) * 1.5;
-      const playerRadius = 14 + corePulse;
+      const corePulse = Math.sin(now / 140) * 1.2;
+      const playerRadius = 10.5 + corePulse;
 
       const playerGrad = ctx.createRadialGradient(px, py, 2, px, py, playerRadius);
       playerGrad.addColorStop(0, '#ffffff');
@@ -438,17 +483,17 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
 
       // Outer shield ring
       ctx.strokeStyle = '#bae6fd';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
 
       // Cyber crosshair detail
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(px - 5, py);
-      ctx.lineTo(px + 5, py);
-      ctx.moveTo(px, py - 5);
-      ctx.lineTo(px, py + 5);
+      ctx.moveTo(px - 4, py);
+      ctx.lineTo(px + 4, py);
+      ctx.moveTo(px, py - 4);
+      ctx.lineTo(px, py + 4);
       ctx.stroke();
 
       ctx.restore();
@@ -459,6 +504,7 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
   }, [
+    allCleared,
     completedCheckpoints,
     invulnerableUntil,
     isHazardDangerous,
@@ -469,12 +515,36 @@ export const MazeCanvas: React.FC<MazeCanvasProps> = ({
 
   return (
     <div className="relative w-full flex flex-col items-center select-none">
+      {/* Dynamic Mission Banner for Exit Portal Status */}
+      <div className="w-full max-w-[1050px] mb-2 flex items-center justify-between text-xs px-3 py-1.5 rounded-lg border bg-slate-900/80 backdrop-blur">
+        <div className="flex items-center gap-2">
+          <span className={`w-2.5 h-2.5 rounded-full ${allCleared ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400 animate-pulse'}`} />
+          <span className="font-mono text-[11px] text-slate-300">
+            {allCleared ? (
+              <strong className="text-emerald-300 font-bold tracking-wide">
+                ⚡ EXTRACTION PORTAL REVEALED IN SECTOR OMEGA (BOTTOM-RIGHT) — ESCAPE NOW!
+              </strong>
+            ) : (
+              <span>
+                <strong className="text-cyan-300">Mission:</strong> Navigate the expanded grid & secure all 5 Checkpoints to reveal the Exit Portal ({completedCheckpoints.filter(Boolean).length}/5)
+              </span>
+            )}
+          </span>
+        </div>
+
+        {allCleared && (
+          <div className="hidden sm:flex items-center gap-1.5 font-mono text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/50 px-2 py-0.5 rounded animate-pulse">
+            <span>PORTAL ONLINE ➔</span>
+          </div>
+        )}
+      </div>
+
       <div className="relative border-2 border-slate-700/80 rounded-xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] bg-slate-950 max-w-full">
         <canvas
           ref={canvasRef}
           width={MAZE_COLS * CELL_SIZE}
           height={MAZE_ROWS * CELL_SIZE}
-          className="block max-w-full h-auto aspect-[25/15]"
+          className="block max-w-full h-auto aspect-[35/21]"
         />
       </div>
 
